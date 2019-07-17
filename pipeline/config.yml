@@ -1,0 +1,6 @@
+PROJECT: "/opt/current_project"
+DATABASE: "/opt/current_project/db"
+MYSQL_HOST: 'localhost'
+MYSQL_USER: 'root'
+MYSQL_PASSWD: ''
+MYSQL_DB: 'current_project'
