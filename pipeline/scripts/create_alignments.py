@@ -86,7 +86,7 @@ def get_combinations(filename, df_sequences):
     combinations[df_sequences.index[0]] = best_matches
     #print("Warning! we only consider best matching combination")
     
-    return combinations
+    #return combinations
 
     for species_name in df_sequences['species'].unique().tolist():
         for np_id in df_sequences[df_sequences['species'] == species_name].index.tolist():
@@ -215,7 +215,7 @@ def write_fasta_to_db(fasta, db_id, species):
 def write_best_combination_to_db(msa_id, convart_gene_id):
     global con, cur
     
-    cur.execute("INSERT INTO msa_best_combination (msa_id, convart_gene_id) VALUES(%s, %s)", 
+    cur.execute("INSERT IGNORE INTO msa_best_combination (msa_id, convart_gene_id) VALUES(%s, %s)", 
                             (msa_id, convart_gene_id))
     con.commit()
 
@@ -288,6 +288,21 @@ if __name__ == '__main__':
         input_dirs = ["/opt/current_project/results/seqs_with_homology"]
         output_dir = "/opt/current_project/results/alignments_new3"
 
+        truncate = "" if len(sys.argv) < 3 else sys.argv[2]
+
+        if truncate == 'truncate':
+            
+            print("Truncating MSA tables")
+
+            cur.execute('TRUNCATE TABLE msa')
+            cur.execute('TRUNCATE TABLE msa_gene')
+            cur.execute('TRUNCATE TABLE msa_best_combination')
+            #cur.execute('TRUNCATE TABLE convart_gene')
+            #cur.execute('TRUNCATE TABLE convart_gene_to_db')
+            con.commit()
+        else:
+            print("Inserting the MSA tables without truncating them")
+
         #Directory which stores the processed fasta files which contains at most one gene for each species 
         processed_fasta_output_dir = path.join(output_dir, 'processed_fasta')
         
@@ -295,13 +310,6 @@ if __name__ == '__main__':
             shutil.rmtree(processed_fasta_output_dir)
         
         os.makedirs(processed_fasta_output_dir)
-
-        cur.execute('TRUNCATE TABLE msa')
-        cur.execute('TRUNCATE TABLE msa_gene')
-        cur.execute('TRUNCATE TABLE msa_best_combination')
-        cur.execute('TRUNCATE TABLE convart_gene')
-        cur.execute('TRUNCATE TABLE convart_gene_to_db')
-        con.commit()
         
         for input_dir in input_dirs:
             raw_fasta_files = os.listdir(input_dir)
