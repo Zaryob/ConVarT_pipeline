@@ -17,6 +17,48 @@ import time
 import random
 import string
 import yaml
+import argparse
+import numpy as np 
+
+class Options():
+    
+    def __init__(self):
+        self.parse_arguments()      
+        self.parse_config()
+        self.validate_arguments()
+
+    def parse_config(self):
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+
+        with open(dir_path+'/../config.yml') as f:
+            config = yaml.load(f)
+
+        self.config = config
+        
+    def parse_arguments(self):
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--mode", choices=['construct_database','single_fasta'], required=True,
+                            help="Mode of alignment: either `construct_database` or `single_fasta`")
+        parser.add_argument("--truncate", type=bool, default=False,
+                            help="Whether to truncate the DB or not if mode is `construct_database`")
+        parser.add_argument("--input_path", type=str, nargs='+', default=[],
+                            help='The input folder which contains fasta files which is used when mode is construct_database')      
+                      
+        parser.add_argument("--output_path", type=str, required=True, 
+                        help="The output filename or path depending on the mode")
+
+        args = parser.parse_args()
+        self.args = args
+        self.mode = args.mode
+        self.truncate = args.truncate
+        self.input_path = args.input_path
+        self.output_path = args.output_path
+    
+    def validate_arguments(self):
+        if self.mode == 'construct_database':
+            for cur_path in self.input_path:
+                if not os.path.exists(cur_path):
+                    raise Exception('{} does not exist. `input_path` needs to contain fasta files that will be saved to DB'.format(cur_path))
 
 def generate_tmp_file(size=10, chars=string.ascii_uppercase + string.digits): 
     filename = path.join('/tmp', ''.join(random.choice(chars) for x in range(size)))
@@ -29,6 +71,16 @@ def catched_subprocess(command):
     except Exception as e:
         print("Error", e, command)
         return ''.encode()
+
+def get_pseudo_matches(filename, df_sequences):
+    alignment_identity = df_sequences[['species']].copy()
+    
+    alignment_identity['scores'] = np.random.rand(alignment_identity.shape[0], 1)
+
+    best_matches = alignment_identity[['scores', 'species']].groupby("species").idxmax() 
+
+    return best_matches['scores']
+
 
 def get_best_matches(filename, df_sequences):
     """
@@ -80,24 +132,25 @@ def process_fasta_file(filename):
 
 def get_combinations(filename, df_sequences):
     
-    best_matches = get_best_matches(filename, df_sequences)
+    #best_matches = get_pseudo_matches(filename, df_sequences)
     
-    combinations = {}
-    combinations[df_sequences.index[0]] = best_matches
-    #print("Warning! we only consider best matching combination")
     
-    #return combinations
+    all_possible_combinations = []
+    species_list = df_sequences['species'].unique().tolist()
+    root_match = pd.Series(data=[str(df_sequences[df_sequences['species']==species_list[0]].index[0])], index=[species_list[0]])
+    stack = [root_match]
+    while len(stack) > 0:
+        current_combination = stack.pop().copy()
+        level = current_combination.shape[0]
+        if level == len(species_list):
+            all_possible_combinations.append(current_combination)
+            continue
+        
+        for np_id in df_sequences[df_sequences['species'] == species_list[level]].index.tolist():
+            current_combination.loc[species_list[level]] = str(np_id)
+            stack.append(current_combination.copy())
 
-    for species_name in df_sequences['species'].unique().tolist():
-        for np_id in df_sequences[df_sequences['species'] == species_name].index.tolist():
-            if np_id == best_matches.loc[species_name]:
-                continue
-
-            fasta_combination = best_matches.copy()
-            fasta_combination.loc[species_name] = np_id
-            combinations[np_id] = fasta_combination
-
-    return combinations
+    return all_possible_combinations
 
 def create_alignment(input_file, df_sequences=None):
     output_file = generate_tmp_file()
@@ -151,13 +204,7 @@ def align_combination(output_dir, combination, df_sequences):
 
     return create_alignment(processed_fasta, df_sequences.loc[combination.tolist(), :])
 
-with open('../config.yml') as f:
-    config = yaml.load(f)
 
-con = pymysql.connect(host=config['MYSQL_HOST'], user=config['MYSQL_USER'], passwd=config['MYSQL_PASSWD'], 
-                      db=config['MYSQL_DB'])
-
-cur = con.cursor()
 
 def write_msa_to_db(fasta, combination):
     global cur, con
@@ -225,12 +272,12 @@ def save_to_db(df_sequences, combinations, msa_results):
         convart_gene_id = write_fasta_to_db(row['sequence'], gene_id, row['species'])
         if row['species'] == 'Homo sapiens':
             human_convart_gene_id = convart_gene_id
-
-    for gene_id, combination in combinations.items():
-        fasta = msa_results[gene_id]
+        
+    for ind, combination in enumerate(combinations):
+        fasta = msa_results[ind]
         msa_id = write_msa_to_db(fasta, combination)
-        if gene_id == df_sequences.index[0]:
-            write_best_combination_to_db(msa_id, human_convart_gene_id)
+        #if gene_id == df_sequences.index[0]:
+        #    write_best_combination_to_db(msa_id, human_convart_gene_id)
 
 ## Creating fasta files that contains at most one gene for each species
 def align_fasta_file(file):
@@ -244,22 +291,22 @@ def align_fasta_file(file):
 
         if len(df_sequences['species'].unique()) == df_sequences.shape[0]:
             combination = pd.Series(df_sequences.index, index=df_sequences['species'])
-            combinations = {combination.loc['Homo sapiens']: combination}
+            combinations = list({combination.loc['Homo sapiens']: combination}.values())
         else:
             combinations = get_combinations(filename, df_sequences)        
         
         msa_results = {}
 
-        for protein_id, combination in combinations.items():
+        for ind, combination in enumerate(combinations):
             fasta = align_combination(output_dir, combination, df_sequences)
-            msa_results[protein_id] = fasta
+            msa_results[ind] = fasta
         
         return df_sequences, combinations, msa_results
                         
     except Exception as e:
         print(e, file)
 
-def align_and_save_parallel(func, args, n_processes = 30):
+def align_and_save_parallel(func, args, n_processes = 1):
     p = Pool(n_processes)
 
     with tqdm(total = len(args)) as pbar:
@@ -279,14 +326,18 @@ def align_and_save_parallel(func, args, n_processes = 30):
     p.join()
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("The correct format is python3 create_alignment.py <command (i.e. construct_database single_fasta)> <filename if command is single_fasta>")
+    pipeline_options = Options()
+    
+    con = pymysql.connect(host=pipeline_options.config['MYSQL_HOST'], user=pipeline_options.config['MYSQL_USER'], passwd=pipeline_options.config['MYSQL_PASSWD'], 
+                      db=pipeline_options.config['MYSQL_DB'])
 
-    mode = sys.argv[1]
+    cur = con.cursor()
+        
+    mode = pipeline_options.mode
 
     if mode == 'construct_database':
-        input_dirs = ["/opt/current_project/results/seqs_with_homology"]
-        output_dir = "/opt/current_project/results/alignments_new3"
+        input_dirs = pipeline_options.input_path
+        output_dir = pipeline_options.output_path
 
         truncate = "" if len(sys.argv) < 3 else sys.argv[2]
 
@@ -316,9 +367,9 @@ if __name__ == '__main__':
             results = align_and_save_parallel(align_fasta_file, raw_fasta_files, 30)
 
     elif mode == 'single_fasta':
-        if len(sys.argv) != 3 or not os.path.exists(sys.argv[2]):
+        filename = pipeline.input_path[0]
+        if not os.path.exists(filename):
             print("File does not exist")
 
-        filename = sys.argv[2]
 
         print(create_alignment(filename))
