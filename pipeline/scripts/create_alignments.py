@@ -159,7 +159,7 @@ def create_alignment(input_file, df_sequences=None):
     with open(output_file, 'r') as file:
         fasta = ''.join(file.readlines())
 
-    if type(df_sequences) != None:
+    if type(df_sequences).__name__ != 'NoneType':
         for np_id in df_sequences.index.tolist():
             fasta = fasta.replace(np_id, np_id + ' ['+df_sequences.loc[np_id, 'species']+']')
         
@@ -269,6 +269,7 @@ def write_best_combination_to_db(msa_id, convart_gene_id):
 
 def save_to_db(df_sequences, combinations, msa_results):
     for gene_id, row in df_sequences.iterrows():
+        
         convart_gene_id = write_fasta_to_db(row['sequence'], gene_id, row['species'])
         if row['species'] == 'Homo sapiens':
             human_convart_gene_id = convart_gene_id
@@ -339,17 +340,15 @@ if __name__ == '__main__':
         input_dirs = pipeline_options.input_path
         output_dir = pipeline_options.output_path
 
-        truncate = "" if len(sys.argv) < 3 else sys.argv[2]
-
-        if truncate == 'truncate':
+        if pipeline_options.truncate:
             
             print("Truncating MSA tables")
 
             cur.execute('TRUNCATE TABLE msa')
             cur.execute('TRUNCATE TABLE msa_gene')
             cur.execute('TRUNCATE TABLE msa_best_combination')
-            #cur.execute('TRUNCATE TABLE convart_gene')
-            #cur.execute('TRUNCATE TABLE convart_gene_to_db')
+            cur.execute('TRUNCATE TABLE convart_gene')
+            cur.execute('TRUNCATE TABLE convart_gene_to_db')
             con.commit()
         else:
             print("Inserting the MSA tables without truncating them")
