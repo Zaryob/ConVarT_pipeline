@@ -1,2 +1,4 @@
 tmp/
 db/
+analysis/*.ipynb
+

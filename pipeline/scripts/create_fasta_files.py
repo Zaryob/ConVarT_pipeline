@@ -183,6 +183,7 @@ if __name__ == '__main__':
                     if transcript_id in saved_ids:
                         continue
                     saved_ids.add(transcript_id)
+                    sequence = fasta_lists[species][transcript_id]
                     
                     current_fasta += create_formatted_fasta(transcript_id, species, sequence)
                     
