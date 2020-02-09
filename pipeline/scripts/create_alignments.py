@@ -5,6 +5,7 @@ import pymysql
 import re
 import pandas as pd
 import subprocess
+import hashlib
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=pd.errors.ParserWarning)
@@ -159,7 +160,7 @@ def create_alignment(input_file, df_sequences=None):
     with open(output_file, 'r') as file:
         fasta = ''.join(file.readlines())
 
-    if type(df_sequences) != None:
+    if type(df_sequences).__name__ != 'NoneType':
         for np_id in df_sequences.index.tolist():
             fasta = fasta.replace(np_id, np_id + ' ['+df_sequences.loc[np_id, 'species']+']')
         
@@ -242,12 +243,14 @@ def write_fasta_to_db(fasta, db_id, species):
     else:
         db = 'OTHER'
 
-    fasta = re.sub(r'>(.*?)\n', '', fasta).replace('\n','')
-    cur.execute("SELECT id FROM convart_gene WHERE sequence = %s AND species_id= %s", (fasta, species))
+    fasta = re.sub(r'>(.*?)\n', '', fasta).replace('\n','').replace("'", '')
+    seq_hash = hashlib.md5((fasta+species).encode('utf-8')).hexdigest()
+
+    cur.execute("SELECT id FROM convart_gene WHERE hash=%s and species_id=%s", (seq_hash, species))
     
     if cur.rowcount == 0:
-        cur.execute("INSERT IGNORE INTO convart_gene (sequence, species_id) VALUES(%s, %s)", 
-                            (fasta, species))
+        cur.execute("INSERT IGNORE INTO convart_gene (sequence, species_id, hash) VALUES(%s, %s, %s)", 
+                            (fasta, species, seq_hash))
         
         convart_gene_id = con.insert_id()
         con.commit()
@@ -269,6 +272,7 @@ def write_best_combination_to_db(msa_id, convart_gene_id):
 
 def save_to_db(df_sequences, combinations, msa_results):
     for gene_id, row in df_sequences.iterrows():
+        
         convart_gene_id = write_fasta_to_db(row['sequence'], gene_id, row['species'])
         if row['species'] == 'Homo sapiens':
             human_convart_gene_id = convart_gene_id
@@ -339,17 +343,15 @@ if __name__ == '__main__':
         input_dirs = pipeline_options.input_path
         output_dir = pipeline_options.output_path
 
-        truncate = "" if len(sys.argv) < 3 else sys.argv[2]
-
-        if truncate == 'truncate':
+        if pipeline_options.truncate:
             
             print("Truncating MSA tables")
 
             cur.execute('TRUNCATE TABLE msa')
             cur.execute('TRUNCATE TABLE msa_gene')
             cur.execute('TRUNCATE TABLE msa_best_combination')
-            #cur.execute('TRUNCATE TABLE convart_gene')
-            #cur.execute('TRUNCATE TABLE convart_gene_to_db')
+            cur.execute('TRUNCATE TABLE convart_gene')
+            cur.execute('TRUNCATE TABLE convart_gene_to_db')
             con.commit()
         else:
             print("Inserting the MSA tables without truncating them")
@@ -364,7 +366,7 @@ if __name__ == '__main__':
         
         for input_dir in input_dirs:
             raw_fasta_files = os.listdir(input_dir)
-            results = align_and_save_parallel(align_fasta_file, raw_fasta_files, 30)
+            results = align_and_save_parallel(align_fasta_file, raw_fasta_files, 27)
 
     elif mode == 'single_fasta':
         filename = pipeline.input_path[0]
