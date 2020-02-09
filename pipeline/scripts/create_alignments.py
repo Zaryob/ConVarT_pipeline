@@ -5,6 +5,7 @@ import pymysql
 import re
 import pandas as pd
 import subprocess
+import hashlib
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=pd.errors.ParserWarning)
@@ -242,12 +243,14 @@ def write_fasta_to_db(fasta, db_id, species):
     else:
         db = 'OTHER'
 
-    fasta = re.sub(r'>(.*?)\n', '', fasta).replace('\n','')
-    cur.execute("SELECT id FROM convart_gene WHERE sequence = %s AND species_id= %s", (fasta, species))
+    fasta = re.sub(r'>(.*?)\n', '', fasta).replace('\n','').replace("'", '')
+    seq_hash = hashlib.md5((fasta+species).encode('utf-8')).hexdigest()
+
+    cur.execute("SELECT id FROM convart_gene WHERE hash=%s and species_id=%s", (seq_hash, species))
     
     if cur.rowcount == 0:
-        cur.execute("INSERT IGNORE INTO convart_gene (sequence, species_id) VALUES(%s, %s)", 
-                            (fasta, species))
+        cur.execute("INSERT IGNORE INTO convart_gene (sequence, species_id, hash) VALUES(%s, %s, %s)", 
+                            (fasta, species, seq_hash))
         
         convart_gene_id = con.insert_id()
         con.commit()
@@ -363,7 +366,7 @@ if __name__ == '__main__':
         
         for input_dir in input_dirs:
             raw_fasta_files = os.listdir(input_dir)
-            results = align_and_save_parallel(align_fasta_file, raw_fasta_files, 30)
+            results = align_and_save_parallel(align_fasta_file, raw_fasta_files, 27)
 
     elif mode == 'single_fasta':
         filename = pipeline.input_path[0]

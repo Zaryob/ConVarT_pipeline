@@ -209,13 +209,20 @@ DROP TABLE IF EXISTS `convart_gene`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `convart_gene` (
-  `id` int(32) NOT NULL AUTO_INCREMENT,
+  `id` int(32) NOT NULL,
   `sequence` text NOT NULL,
   `species_id` varchar(55) NOT NULL,
-  PRIMARY KEY (`id`),
-  KEY `species` (`species_id`),
-  FULLTEXT KEY `sequence` (`sequence`)
-) ENGINE=MyISAM AUTO_INCREMENT=290930 DEFAULT CHARSET=utf8;
+  `hash` varchar(150) NOT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+
+--
+-- Indexes for table `convart_gene`
+--
+ALTER TABLE `convart_gene`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `hash` (`hash`),
+  ADD KEY `species` (`species_id`);
+
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
