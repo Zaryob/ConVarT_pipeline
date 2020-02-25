@@ -1,4 +1,4 @@
 tmp/
 db/
-analysis/*.ipynb
-
+pipeline/analysis/*.ipynb
+pipeline/analysis/*.fa*
