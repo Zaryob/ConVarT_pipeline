@@ -1,3 +1,6 @@
+import multiprocessing
+multiprocessing.set_start_method('spawn', True)
+
 import sys
 import os
 from os import path
@@ -12,14 +15,20 @@ warnings.simplefilter(action='ignore', category=pd.errors.ParserWarning)
 warnings.simplefilter(action="ignore", category=pymysql.Warning)
 import shutil
 from sqlalchemy import create_engine
-from multiprocessing import Pool
+
 from tqdm import *
 import time
 import random
 import string
-import yaml
 import argparse
 import numpy as np 
+from pipeline.mysql_helper import MySqlHelper
+from pipeline.parallel_helper import run_parallel
+from pipeline import (
+    config_loader,
+    catched_subprocess,
+    connection_loader
+)
 
 class Options():
     
@@ -29,22 +38,20 @@ class Options():
         self.validate_arguments()
 
     def parse_config(self):
-        dir_path = os.path.dirname(os.path.realpath(__file__))
+        self.config = config_loader()
 
-        with open(dir_path+'/../config.yml') as f:
-            config = yaml.load(f)
-
-        self.config = config
-        
     def parse_arguments(self):
         parser = argparse.ArgumentParser()
         parser.add_argument("--mode", choices=['construct_database','single_fasta'], required=True,
                             help="Mode of alignment: either `construct_database` or `single_fasta`")
+        parser.add_argument("--database", type=str, required=True,
+                            help="Database name")
         parser.add_argument("--truncate", type=bool, default=False,
                             help="Whether to truncate the DB or not if mode is `construct_database`")
         parser.add_argument("--input_path", type=str, nargs='+', default=[],
                             help='The input folder which contains fasta files which is used when mode is construct_database')      
-                      
+        parser.add_argument("--only_best_match", type=bool, default=False,
+                            help="If set true, creates MSAs for only the best match. Default is False")
         parser.add_argument("--output_path", type=str, required=True, 
                         help="The output filename or path depending on the mode")
 
@@ -54,7 +61,9 @@ class Options():
         self.truncate = args.truncate
         self.input_path = args.input_path
         self.output_path = args.output_path
-    
+        self.only_best_match = args.only_best_match
+        self.database= args.database
+
     def validate_arguments(self):
         if self.mode == 'construct_database':
             for cur_path in self.input_path:
@@ -66,21 +75,6 @@ def generate_tmp_file(size=10, chars=string.ascii_uppercase + string.digits):
 
     return filename
 
-def catched_subprocess(command):
-    try:
-        return subprocess.check_output(command, shell=True)
-    except Exception as e:
-        print("Error", e, command)
-        return ''.encode()
-
-def get_pseudo_matches(filename, df_sequences):
-    alignment_identity = df_sequences[['species']].copy()
-    
-    alignment_identity['scores'] = np.random.rand(alignment_identity.shape[0], 1)
-
-    best_matches = alignment_identity[['scores', 'species']].groupby("species").idxmax() 
-
-    return best_matches['scores']
 
 
 def get_best_matches(filename, df_sequences):
@@ -131,9 +125,9 @@ def process_fasta_file(filename):
     
     return df_sequences
 
-def get_combinations(filename, df_sequences):
-    
-    #best_matches = get_pseudo_matches(filename, df_sequences)
+def get_combinations(filename, df_sequences, only_best_match=False, **kwargs):
+    if only_best_match:
+        return [get_best_matches(filename, df_sequences)]
     
     
     all_possible_combinations = []
@@ -206,89 +200,12 @@ def align_combination(output_dir, combination, df_sequences):
     return create_alignment(processed_fasta, df_sequences.loc[combination.tolist(), :])
 
 
-
-def write_msa_to_db(fasta, combination):
-    global cur, con
-
-    cur.execute("INSERT INTO msa (fasta, alignment_method) VALUES(%s, %s)", (fasta, 'clustalw'))
-    
-    msa_id = cur.lastrowid
-
-    for np_id in combination.values:
-        np_id_without_version = np_id.split('.')[0]
-
-        cur.execute("SELECT convart_gene_id FROM convart_gene_to_db WHERE db_id = %s LIMIT 1", 
-                                        (np_id_without_version))
-        row = cur.fetchone()
-        convart_gene_id = row[0]
-        con.commit()
-
-        cur.execute("INSERT INTO msa_gene (msa_id, convart_gene_id) VALUES(%s, %s)", (msa_id, convart_gene_id))
-    
-    con.commit()
-
-    return msa_id
-
-def write_fasta_to_db(fasta, db_id, species):
-    global con, cur
-    
-    db_id_version = None
-    if '.' in db_id:
-        db_id, db_id_version = db_id.split('.')[0], db_id.split('.')[1]
-
-    if 'NP' in db_id:
-        db = 'NP'
-    elif 'ENST' in db_id:
-        db = 'ENST'
-    else:
-        db = 'OTHER'
-
-    fasta = re.sub(r'>(.*?)\n', '', fasta).replace('\n','').replace("'", '')
-    seq_hash = hashlib.md5((fasta+species).encode('utf-8')).hexdigest()
-
-    cur.execute("SELECT id FROM convart_gene WHERE hash=%s and species_id=%s", (seq_hash, species))
-    
-    if cur.rowcount == 0:
-        cur.execute("INSERT IGNORE INTO convart_gene (sequence, species_id, hash) VALUES(%s, %s, %s)", 
-                            (fasta, species, seq_hash))
-        
-        convart_gene_id = con.insert_id()
-        con.commit()
-    else:
-        row = cur.fetchone()
-        convart_gene_id = row[0]
-    cur.execute("INSERT IGNORE INTO convart_gene_to_db (convart_gene_id, db, db_id, db_id_version) VALUES(%s, %s, %s, %s)", 
-                    (convart_gene_id, db, db_id, db_id_version))
-
-    return convart_gene_id
-
-def write_best_combination_to_db(msa_id, convart_gene_id):
-    global con, cur
-    
-    cur.execute("INSERT IGNORE INTO msa_best_combination (msa_id, convart_gene_id) VALUES(%s, %s)", 
-                            (msa_id, convart_gene_id))
-    con.commit()
-
-
-def save_to_db(df_sequences, combinations, msa_results):
-    for gene_id, row in df_sequences.iterrows():
-        
-        convart_gene_id = write_fasta_to_db(row['sequence'], gene_id, row['species'])
-        if row['species'] == 'Homo sapiens':
-            human_convart_gene_id = convart_gene_id
-        
-    for ind, combination in enumerate(combinations):
-        fasta = msa_results[ind]
-        msa_id = write_msa_to_db(fasta, combination)
-        #if gene_id == df_sequences.index[0]:
-        #    write_best_combination_to_db(msa_id, human_convart_gene_id)
-
 ## Creating fasta files that contains at most one gene for each species
-def align_fasta_file(file):
+def align_fasta_file(filename, **kwargs):
     try:
         #source = re.search(r"_(.*?)\.fasta", file).group(1)
         
-        filename = path.join(input_dir, file)
+
         df_sequences = process_fasta_file(filename)
         if df_sequences.shape[0] <= 1:
             return False
@@ -297,62 +214,36 @@ def align_fasta_file(file):
             combination = pd.Series(df_sequences.index, index=df_sequences['species'])
             combinations = list({combination.loc['Homo sapiens']: combination}.values())
         else:
-            combinations = get_combinations(filename, df_sequences)        
+            combinations = get_combinations(filename, df_sequences, **kwargs)        
         
         msa_results = {}
 
         for ind, combination in enumerate(combinations):
-            fasta = align_combination(output_dir, combination, df_sequences)
+            fasta = align_combination(kwargs['output_dir'], combination, df_sequences)
             msa_results[ind] = fasta
         
         return df_sequences, combinations, msa_results
                         
     except Exception as e:
-        print(e, file)
+        print(e, filename)
 
-def align_and_save_parallel(func, args, n_processes = 1):
-    p = Pool(n_processes)
 
-    with tqdm(total = len(args)) as pbar:
-        for res in tqdm(p.imap_unordered(func, args, chunksize=n_processes)):
-            pbar.update()
-            if type(res) == bool or res == None:
-                continue
-
-            try:
-                df_sequences, combinations, msa_results = res
-                save_to_db(df_sequences, combinations, msa_results)
-            except Exception as e:
-                print("Error during insertion to db", sys.exc_info()[0], e)
-
-    pbar.close()
-    p.close()
-    p.join()
 
 if __name__ == '__main__':
     pipeline_options = Options()
     
-    con = pymysql.connect(host=pipeline_options.config['MYSQL_HOST'], user=pipeline_options.config['MYSQL_USER'], passwd=pipeline_options.config['MYSQL_PASSWD'], 
-                      db=pipeline_options.config['MYSQL_DB'])
-
-    cur = con.cursor()
-        
+    conn = connection_loader()
+    sql_helper = MySqlHelper(conn)
+    
     mode = pipeline_options.mode
 
     if mode == 'construct_database':
         input_dirs = pipeline_options.input_path
         output_dir = pipeline_options.output_path
 
-        if pipeline_options.truncate:
-            
+        if pipeline_options.truncate == True:
             print("Truncating MSA tables")
-
-            cur.execute('TRUNCATE TABLE msa')
-            cur.execute('TRUNCATE TABLE msa_gene')
-            cur.execute('TRUNCATE TABLE msa_best_combination')
-            cur.execute('TRUNCATE TABLE convart_gene')
-            cur.execute('TRUNCATE TABLE convart_gene_to_db')
-            con.commit()
+            sql_helper.truncate_tables()
         else:
             print("Inserting the MSA tables without truncating them")
 
@@ -363,15 +254,25 @@ if __name__ == '__main__':
             shutil.rmtree(processed_fasta_output_dir)
         
         os.makedirs(processed_fasta_output_dir)
-        
+        only_best_match = pipeline_options.only_best_match
+
         for input_dir in input_dirs:
-            raw_fasta_files = os.listdir(input_dir)
-            results = align_and_save_parallel(align_fasta_file, raw_fasta_files, 27)
+            raw_fasta_files = [os.path.join(input_dir, filename) for filename in os.listdir(input_dir)]
+            def chunk_callback(res, **kwargs):
+                sql_helper.save_to_db(*res, only_best_match=only_best_match)
+
+            results = run_parallel(
+                                func = align_fasta_file, 
+                                chunk_callback = chunk_callback,
+                                args = raw_fasta_files, 
+                                n_processes=26, 
+                                only_best_match=only_best_match, 
+                                output_dir=output_dir
+                                )
 
     elif mode == 'single_fasta':
-        filename = pipeline.input_path[0]
+        filename = pipeline_options.input_path[0]
         if not os.path.exists(filename):
             print("File does not exist")
-
 
         print(create_alignment(filename))

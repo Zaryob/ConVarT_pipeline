@@ -9,6 +9,11 @@ import shutil
 import os
 import yaml
 import argparse
+from pathlib import Path
+from pipeline import config_loader
+# TO - DO
+# [ ] Conflicts with paths and commons.yml
+# [ ] Since there is more than one resource for species protein seq., only species name is invalid anymore (E.g.: Mus_musculus.faa.gz -> Mus_musculus_Ensembl.faa.gz) 
 
 SPECIES_LIST = ['Pan_troglodytes', 'Macaca_mulatta', 'Rattus_norvegicus', 'Mus_musculus', 'Danio_rerio', 
             'Xenopus_tropicalis', 'Drosophila_melanogaster', 'Caenorhabditis_elegans']
@@ -41,21 +46,18 @@ class Options():
     def parse_config(self):
         dir_path = os.path.dirname(os.path.realpath(__file__))
 
-        with open(dir_path+'/../config.yml') as f:
-            config = yaml.load(f)
-
-        self.project_path = config['PROJECT']
+        config = config_loader()
         
-        self.db_path = config['DATABASE']
-        self.output_path = self.project_path+'/results/{}/'.format(self.output_path)
+        self.db_path = config['staging_path']
 
-        
+        self.output_path = self.output_path
+
     def parse_arguments(self):
         parser = argparse.ArgumentParser()
         parser.add_argument("--included_species", type=str, nargs='+', required=True,
                             help="List of species that are included in the fasta files that will be created")
         parser.add_argument("--output_path", type=str, default='trial_seqs', 
-                        help="the subdirectory that outputs will be saved in $PROJECT_PATH/results/{output_path}, where PROJECT_PATH is set in config.yml. ")
+                        help="the subdirectory that outputs will be saved to. ")
         args = parser.parse_args()
         self.args = args
         self.included_species = args.included_species
@@ -97,8 +99,6 @@ if __name__ == '__main__':
 
     transcript_id_to_gene_id = pd.concat([enst_to_gene_id, np_to_gene_id], axis=0, ignore_index=True)
 
-    gene_id_to_transcript_ids = pd.concat([enst_to_gene_id, np_to_gene_id], axis=0, ignore_index=True)
-
     for species in pipeline_options.included_species + ['Homo_sapiens']:
         species_list_file = path.join(pipeline_options.db_path, 'mapping', 'NP_tables', species+'.list')
 
@@ -107,8 +107,6 @@ if __name__ == '__main__':
         transcript_list.columns = ['transcript_id', 'gene_id']
         if species != 'Homo_sapiens':
             transcript_id_to_gene_id = pd.concat([transcript_id_to_gene_id, transcript_list],
-                                                axis=0, ignore_index=True)
-            gene_id_to_transcript_ids = pd.concat([gene_id_to_transcript_ids, transcript_list],
                                                 axis=0, ignore_index=True)
         
         fasta_lists[species] = {} 
@@ -133,13 +131,11 @@ if __name__ == '__main__':
     transcript_id_to_gene_id = transcript_id_to_gene_id.dropna()
     transcript_id_to_gene_id.loc[:, 'transcript_id'] = transcript_id_to_gene_id['transcript_id'].apply(lambda x: x.split('.')[0])
     transcript_id_to_gene_id.loc[:, 'gene_id'] = transcript_id_to_gene_id.loc[:, 'gene_id'].astype(str) 
-    transcript_id_to_gene_id = transcript_id_to_gene_id.set_index('transcript_id')
 
-    gene_id_to_transcript_ids = gene_id_to_transcript_ids.dropna()
-    gene_id_to_transcript_ids.loc[:, 'gene_id'] = gene_id_to_transcript_ids.loc[:, 'gene_id'].astype(str)
-
-    gene_id_to_transcript_ids.loc[:, 'transcript_id'] = gene_id_to_transcript_ids['transcript_id'].apply(lambda x: x.split('.')[0])
+    gene_id_to_transcript_ids = transcript_id_to_gene_id.copy(deep=True)
     gene_id_to_transcript_ids = gene_id_to_transcript_ids.groupby('gene_id')['transcript_id'].apply(lambda x: ','.join(x))
+
+    transcript_id_to_gene_id = transcript_id_to_gene_id.set_index('transcript_id')
 
 
     def generate_fasta(human_transcript_id_with_version):
@@ -192,7 +188,7 @@ if __name__ == '__main__':
         if not more_than_one:
             return False
 
-        with open(path.join(pipeline_options.output_path+human_transcript_id_with_version), 'w') as f:
+        with open(path.join(pipeline_options.output_path,human_transcript_id_with_version), 'w') as f:
             f.write(current_fasta)
 
 

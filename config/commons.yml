@@ -1,0 +1,7 @@
+staging_path: $STAGING_PATH
+tmp_path: $TMP_PATH
+database:
+  host: 'localhost'
+  username: $MYSQL_USERNAME
+  password: $MYSQL_PASSWORD
+  database: $MYSQL_DATABASE
