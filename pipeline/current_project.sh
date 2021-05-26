@@ -1,8 +1,8 @@
 #!/bin/bash
 
 #PROJECT ENVIRONMENT
-PROJECT="/opt/current_project"
-DATABASE="/opt/current_project/db"
+PROJECT="C:/Users/halil/current_project"
+DATABASE="C:/Users/halil/current_project/db"
 
 #CLINVAR
 retrieve_and_process_ClinVar() {

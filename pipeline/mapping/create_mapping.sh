@@ -1,23 +1,6 @@
 #!/bin/bash
 BASEDIR=$(dirname "$0")
 
-parse_yaml() {
-   local prefix=$2
-   local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
-   sed -ne "s|^\($s\)\($w\)$s:$s\"\(.*\)\"$s\$|\1$fs\2$fs\3|p" \
-        -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$fs\2$fs\3|p"  $1 |
-   awk -F$fs '{
-      indent = length($1)/2;
-      vname[indent] = $2;
-      for (i in vname) {if (i > indent) {delete vname[i]}}
-      if (length($3) > 0) {
-         vn=""; for (i=0; i<indent; i++) {vn=(vn)(vname[i])("_")}
-         printf("%s%s%s=\"%s\"\n", "'$prefix'",vn, $2, $3);
-      }
-   }'
-}
-
-
 creating_protein_mapping_file() {
     #Versin GRCh38.p12:::: zcat GCF_000001405.38_GRCh38.p12_protein.gpff.gz | awk '/REFSEQ: accession/ {print $4}' | awk '$0!="NC_012920.1"' > NM.list
     #Versin GRCh38.p12:::: zcat GCF_000001405.38_GRCh38.p12_protein.gpff.gz | awk '/VERSION/ {print $2}' | awk '$0!~/^YP_/' > NP.list
@@ -51,7 +34,7 @@ conversion(){
        map[$line]=1;
     done  <<< "$TEXT"
 
-    IFS=$'\n'; for ENST_number in $(cat "/opt/current_project/db/mapping/WHOLE_ENST_IDS.csv"); 
+    IFS=$'\n'; for ENST_number in $(cat "$STAGING_PATH/mapping/WHOLE_ENST_IDS.csv"); 
     do
         #count_in_exist_file=`cat $PROJECT"/db/mapping/NewCurated_ENSTvsGENEID.csv" | awk -v FS="," '$1=="'$ENST_number'"' |wc -l`
         #count_in_exist_file=`echo $TEXT | grep "${ENST_number},"`
@@ -86,5 +69,5 @@ conversion(){
     rm  $TMP_PATH"/entrez.csv"
 }
 
-creating_protein_mapping_file()
-conversion()
+creating_protein_mapping_file
+conversion
