@@ -1,4 +1,11 @@
 tmp/
 db/
-analysis/*.ipynb
-
+pipeline/analysis/*.ipynb
+pipeline/analysis/*.fa*
+pipeline/analysis/*.csv
+pipeline/analysis/*.db
+pipeline/analysis/*.gz
+*.pybiomart.sqlite
+*/.ipynb_checkpoints/
+.vscode/
+__pycache__/
